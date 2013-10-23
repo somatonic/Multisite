@@ -4,6 +4,13 @@
  *
  * Multisite module for Processwire
  * (C) 2012 Antti Peisa, Avoine Oy
+ * 
+ * Modifications by Philipp "Soma" Urlich
+ * - support Multilanguage 
+ * - support for correct view Actions from admin
+ * - correct urls within admin
+ * - modified locaUrl() to work correctly, coming from LanguageSupportNames module
+ * 
  *
  * ProcessWire 2.x
  * Copyright (C) 2010 by Ryan Cramer
@@ -20,60 +27,184 @@ class Multisite extends WireData implements Module, ConfigurableModule {
 
 		return array(
 			'title' => 'Multisite',
-			'version' => 001,
+			'version' => 002,
 			'summary' => 'Allows multiple sites with different domains run from single PW-site and database.',
 			'singular' => true,
-			'autoload' => true,
+			'autoload' => true
 			);
 	}
 
 	public function init() {
-
-		$this->subdomainsArray = explode("\n", strtolower($this->subdomains));
+		
+		// subdomains from the config
+		// can also be just different domains
+		$this->subdomains = trim($this->subdomains);
+		$this->subdomains = str_replace(" ", "", $this->subdomains);
+		$this->subdomainsArray = explode("\r\n", strtolower($this->subdomains));
 		$this->it = (isset($_GET['it'])) ? ltrim($_GET['it'], '/') : '';
-
+		$this->isAdmin = false;
+		$this->subdomain = '';
+		
+		
+		// if in admin we store that or later usage
+		if(strpos($this->it, ltrim($this->config->urls->admin, "/")) === 0) {
+			//$this->subdomain = '';
+			$this->isAdmin = true;
+			return;
+		} 
+			
 		foreach($this->subdomainsArray as $subdomain) {
+			
 			$subdomain = trim($subdomain);
-			$config = wire('config');
 			$httpHost = strtolower(wire('config')->httpHost);
-
+			
 			if(strpos($httpHost, $subdomain) !== false) {
-
-				$this->subdomain = $subdomain;
-
-				// change path like /about/contact/ to /campaign.com/about/contact/
-				$_GET['it'] = (isset($_GET['it'])) ? "/{$subdomain}/" . ltrim($_GET['it'], '/') : "/{$subdomain}/";
-
-				// hook for path method to make path() and url() methods context aware
-				$this->addHookAfter('Page::path', $this, 'modifyPath');
-
-				break;
+				
+				if(strpos($this->it, $subdomain) === false) {
+					
+					$this->subdomain = $subdomain;
+					$this->langSegment = '';
+					$new_it = $_GET['it']; // we store it to later append it back
+					
+					// language page names support if installed
+					if($this->modules->isInstalled("LanguageSupportPageNames")) {
+						foreach($this->languages as $lang) {
+							$langID = $lang->id;
+							if($lang->isDefault()) $langID = '';
+							
+							$rootPage = $this->pages->get(1);
+							$rootName = $rootPage->get("name$langID");
+							if(strlen($rootName)) {
+								if(strpos($this->it, $rootName . "/") === 0){
+									$this->langSegment = $rootName;
+									$new_it = substr($this->it,strlen($this->langSegment)+1);
+								}
+							}
+						}
+					}
+					
+					// we modify the GET it to tell PW what page to load
+					$_GET['it'] = (isset($_GET['it'])) 
+							? "$this->langSegment/{$subdomain}/" . $new_it
+							: "$this->langSegment/{$subdomain}/";
+				}
 			}
 		}
 	}
 
 	public function ready() {
+		
+		// language page names support if installed
+		if($this->modules->isInstalled("LanguageSupportPageNames")){
+			$this->addHook('Page::localUrl', $this, 'hookPageLocalUrl');
+		}
+		
+		// to modify the path/url of PW pages
+		$this->addHookAfter('Page::path', $this, 'modifyPath');
+		
+		// to modify the actions "view" link in the page tree
+		$this->addHookAfter("ProcessPageListRender::getPageActions", $this, 'hookPageListActions');
+		
+		// to modify the "view" link when editing a page
+		$this->addHookAfter("ProcessPageEdit::buildForm", $this, 'hookPageEditForm');
+		
 		// if $this->subdomain was valid in init(), then no need to do more here.
-		if($this->subdomain) return;
-
+		if($this->subdomain || $this->isAdmin) return;
+		
 		$this->subdomain = $this->page->rootParent->name;
-
+		
 		// if rootParent->name isn't a subdomain, then no need to continue
 		if(!in_array($this->subdomain, $this->subdomainsArray)) return;
-
+		
 		// if subdomain is visible on url, we might wanna redirect
-		if(strpos($this->it, $this->subdomain) === 0 && !$this->page->editable()) {
+		if(strpos($this->it, $this->subdomain) !== false) {
+			
 			$http = ($this->config->https) ? "https://" : "http://";
 			$url = $http . $this->subdomain;
 			$url .= str_replace("/{$this->subdomain}/", '/', $this->page->url);
 			$this->session->redirect($url);
 		}
+		
 	}
 
-	public function modifyPath($event) {
-		$event->return = str_replace("{$this->subdomain}/", '', $event->return);
+	/**
+	 * We modify the path of pages, so we can use $page->url as usual
+	 * This is a system-wide change of path
+	 */
+	public function modifyPath(HookEvent $event) {
+		foreach($this->subdomainsArray as $subdomain) {
+			$subdomain = trim($subdomain);
+			if(strpos($event->return, $subdomain) !== false) {
+				$event->return = str_replace("{$subdomain}/", '', $event->return);
+			}
+		}
+	}
+	
+	/**
+	 * We modify also localUrl when language support page names module is installed
+	 * LanguageSupportPageNames adds this hook to allow for easy getting a localized url of a page
+	 */
+	public function hookPageLocalUrl(HookEvent $event) {
+		$localUrl = $event->return;
+		if(strpos($localUrl,$this->subdomain) !== false) {
+			$localUrl = str_replace("{$this->subdomain}/","",$localUrl);
+		}
+		$event->return = $localUrl;
+	}
+	
+	/**
+	 * custom page action for view link
+	 * this is to change the domain currently logged in to the correct
+	 * given by the rootParent page name
+	 * 
+	 * @param  HookEvent $event Event object
+	 */
+	public function hookPageListActions(HookEvent $event){
+		$actions = $event->return;
+		$page = $event->arguments('page');
+		if($newurl = $this->getDomainUrl($page)){
+			foreach($actions as $key => $a){
+				if($a['cn'] == "View"){
+					$actions[$key]['url'] = $newurl;
+				}
+			}
+		}
+		$event->return = $actions;
+	}
+	
+	/**
+	 * hook page edit form to change page view link
+	 *
+	 */
+	public function hookPageEditForm(HookEvent $event) {
+		$form = $event->return;
+		$field = $form->find("id=ProcessPageEditView")->first();
+		if(!$field) return; // no view, means no template file for this page template
+		$page = $this->modules->ProcessPageEdit->getPage();
+		if($newurl = $this->getDomainUrl($page)){
+			$field->attr("value", "<a href='$newurl'>$field->label</a>");
+		}
+	}
+	
+	/**
+	 * This method creates the view url used by the module
+	 * @param  Page   $page a ProcessWire page object we want the get back the url
+	 * @return string       the new url
+	 */
+	protected function getDomainUrl(Page $page){
+		$rootparent_domain = $page->rootParent->name;
+		if(!in_array($rootparent_domain, $this->subdomainsArray)) return false;
+		$http = ($this->config->https) ? "https://" : "http://";
+		$newurl = $http . $rootparent_domain;
+		$newurl = $newurl . $page->url;
+		return $newurl;
 	}
 
+	/**
+	 * The module's configuration options
+	 * @param  array  $data configuration data as stored by the module
+	 * @return InptufieldWrapper       return the fields
+	 */
 	static public function getModuleConfigInputfields(array $data) {
 
 		$fields = new InputfieldWrapper();
