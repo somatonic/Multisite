@@ -65,7 +65,7 @@ class Multisite extends WireData implements Module, ConfigurableModule {
 
 					$this->subdomain = $subdomain;
 					$this->langSegment = '';
-					$new_it = $_GET['it']; // we store it to later append it back
+					$new_it = $this->it; // we store it to later append it back
 
 					// language page names support if installed
 					if($this->modules->isInstalled("LanguageSupportPageNames")) {
