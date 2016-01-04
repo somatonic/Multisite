@@ -8,7 +8,8 @@
  * Modifications by Philipp "Soma" Urlich
  * - support Multilanguage
  * - support for correct view Actions from admin
- * - correct urls within admin
+ * - correct urls within admin (TODO: make that configurable, so one can turn off
+ * and add a url textformatter parser for replacing urls on output)
  * - modified locaUrl() to work correctly, coming from LanguageSupportNames module
  *
  *
@@ -21,122 +22,200 @@
  *
  */
 
-class Multisite extends WireData implements Module, ConfigurableModule {
+class Multisite extends WireData implements Module {
+
+	public $domains;
+	static $domainsData;
+	public $site; // store current domain config array for convenience
+
+	/* NOTE, TODO: XML Sitemap by Pete listen to this property, but it was changed in this module from subdomain to domain. */
+	public $domain;
+
 
 	public static function getModuleInfo() {
-
 		return array(
 			'title' => 'Multisite',
-			'version' => 003,
+			'version' => 006,
 			'summary' => 'Allows multiple sites with different domains run from single PW-site and database.',
 			'singular' => true,
 			'autoload' => true
 			);
 	}
 
-	public function init() {
-
-		// subdomains from the config
-		// can also be just different domains
-		$this->subdomains = trim($this->subdomains);
-		$this->subdomains = str_replace(" ", "", $this->subdomains);
-		$this->subdomains = str_replace("\r", "", $this->subdomains);
-		$this->subdomainsArray = explode("\n", strtolower($this->subdomains));
-		$this->it = (isset($_GET['it'])) ? ltrim($_GET['it'], '/') : '';
-		$this->isAdmin = false;
-		$this->subdomain = '';
-
-
-		// if in admin we store that or later usage
-		if(strpos($this->it, ltrim($this->config->urls->admin, "/")) === 0) {
-			//$this->subdomain = '';
-			$this->isAdmin = true;
-			return;
+	public function __construct() {
+		// read config settings
+		if(!wire("config")->MultisiteDomains) {
+			$this->domains = array();
+		} else {
+			$this->domains = wire("config")->MultisiteDomains;
 		}
 
-		foreach($this->subdomainsArray as $subdomain) {
+		$this->site = "";
 
-			$subdomain = trim($subdomain);
-			$httpHost = strtolower(wire('config')->httpHost);
+	}
 
-			if(strpos($httpHost, $subdomain) !== false) {
+	public function init() {
 
-				if(strpos($this->it, $subdomain) === false) {
+		// domains from the config
+		if(!count($this->domains)) return;
 
-					$this->subdomain = $subdomain;
-					$this->langSegment = '';
-					$new_it = $_GET['it']; // we store it to later append it back
+		$this->it = (isset($_GET['it'])) ? ltrim($_GET['it'], '/') : '';
+		$this->isAdmin = false;
+		$this->isAssets = false;
+		$this->isFormBuilder = false;
+		$this->domain = '';
+		$httpHost = strtolower(wire('config')->httpHost);
 
-					// language page names support if installed
-					if($this->modules->isInstalled("LanguageSupportPageNames")) {
-						foreach($this->languages as $lang) {
-							$langID = $lang->id;
-							if($lang->isDefault()) $langID = '';
+		$rootUrl = rtrim(wire('config')->urls->root, '/');
 
-							$rootPage = $this->pages->get(1);
-							$rootName = $rootPage->get("name$langID");
-							if(strlen($rootName)) {
-								if(strpos($this->it, $rootName . "/") === 0){
-									$this->langSegment = $rootName;
-									$new_it = substr($this->it,strlen($this->langSegment)+1);
-								}
+		// if in admin, we store that for later usage
+		if(strpos($rootUrl . $this->it, trim(wire('config')->urls->admin, '/')) === 0) {
+			$this->isAdmin = true;
+		}
+
+		// if it's an assets file request and not a page, we don't need to modify "it"
+		if(strpos($rootUrl . $this->it, ltrim(wire('config')->urls->assets, '/')) === 0){
+			$this->isAssets = true;
+		}
+
+		// if it's form-builder
+		if(strpos($rootUrl . $this->it, "/form-builder/") !== false){
+			$this->isFormBuilder = true;
+		}
+
+		if(array_key_exists($httpHost, $this->domains)) {
+
+			// set the current domain, so it can be picked up in templates or other modules
+			$this->domain = $httpHost;
+			$this->site = $this->domains[$httpHost];
+
+			$this->set404Page($this->domain);
+
+			$domainPageName = $this->domains[$httpHost]['root'];
+
+			// if domain is visible in url, we might wanna redirect
+			if(strpos($this->it, $domainPageName) !== false) {
+
+				// $http = ($this->config->https) ? "https://" : "http://";
+				// $url = $http . $this->domain;
+				$url = str_replace("/{$domainPageName}/", '/', '/' . $this->it);
+				// TODO: problems with urls ?
+				$this->session->redirect($url);
+
+			} else {
+
+				// if the requested URI is an admin url we don't need to go further
+				// we just need to make sure the $this->domain is set, as it's may be
+				// used later in other modules to modify the url, or localUrl()
+				if($this->isAdmin) return;
+
+				// if requested url is a file we don't change
+				if($this->isAssets) return;
+
+				// if requested url is a file we don't change
+				if($this->isFormBuilder) return;
+
+				// language page names support if installed
+				// strip off the lang segment, to later prepend it again
+				$this->langSegment = '';
+				if($this->modules->isInstalled("LanguageSupportPageNames")) {
+					foreach($this->languages as $lang) {
+						$langID = $lang->id;
+						if($lang->isDefault()) $langID = '';
+
+						$rootPage = $this->pages->get(1);
+						$rootName = $rootPage->get("name$langID");
+						if(strlen($rootName)) {
+							if(strpos($this->it, $rootName . "/") === 0){
+								$this->langSegment = $rootName;
+								// $new_it = substr($this->it,strlen($this->langSegment)+1);
+								$this->it = substr($this->it,strlen($this->langSegment)+1);
 							}
 						}
 					}
-
-					// we modify the GET it to tell PW what page to load
-					$_GET['it'] = (isset($_GET['it']))
-							? "$this->langSegment/{$subdomain}/" . $new_it
-							: "$this->langSegment/{$subdomain}/";
 				}
+
+				$langSegment = $this->langSegment ? $this->langSegment . "/" : "";
+
+				// we modify the GET it to tell PW what page to load
+				$_GET['it'] = (isset($_GET['it']))
+						? "$langSegment{$domainPageName}/" . $this->it
+						: "$langSegment{$domainPageName}/";
 			}
+
 		}
+
+
 	}
 
 	public function ready() {
 
-		// language page names support if installed
+		// to modify the path/url of PW pages - this will modify urls returned by $page->url API
+		// we only do that on front-end/templates and not in admin.
+		// this will leave links in wysywigs with the domain in url, so there
+		// is another module parsing textareas for such links to replace urls on output
+
 		if($this->modules->isInstalled("LanguageSupportPageNames")){
 			$this->addHook('Page::localUrl', $this, 'hookPageLocalUrl');
 		}
 
-		// to modify the path/url of PW pages
 		$this->addHookAfter('Page::path', $this, 'modifyPath');
 
-		// to modify the actions "view" link in the page tree
+		//to modify the actions "view" link in the page tree
 		$this->addHookAfter("ProcessPageListRender::getPageActions", $this, 'hookPageListActions');
 
-		// to modify the "view" link when editing a page
-		$this->addHookAfter("ProcessPageEdit::buildForm", $this, 'hookPageEditForm');
-
-		// if $this->subdomain was valid in init(), then no need to do more here.
-		if($this->subdomain || $this->isAdmin) return;
-
-		$this->subdomain = $this->page->rootParent->name;
-
-		// if rootParent->name isn't a subdomain, then no need to continue
-		if(!in_array($this->subdomain, $this->subdomainsArray)) return;
-
-		// if subdomain is visible on url, we might wanna redirect
-		if(strpos($this->it, $this->subdomain) !== false) {
-
-			$http = ($this->config->https) ? "https://" : "http://";
-			$url = $http . $this->subdomain;
-			$url .= str_replace("/{$this->subdomain}/", '/', $this->page->url);
-			$this->session->redirect($url);
-		}
+		//to modify the "view" link when editing a page
+		$this->addHookAfter("ProcessPageEdit::buildFormView", $this, 'hookPageEditFormView');
 
 	}
 
 	/**
 	 * We modify the path of pages, so we can use $page->url as usual
-	 * This is a system-wide change of path
+	 * In this case we strip out the domain segment from the url's of pages
+	 * This is a system-wide change of page->path and page->url
 	 */
 	public function modifyPath(HookEvent $event) {
-		foreach($this->subdomainsArray as $subdomain) {
-			$subdomain = trim($subdomain);
-			if(strpos($event->return, $subdomain) !== false) {
-				$event->return = str_replace("{$subdomain}/", '', $event->return);
+
+		$path = $event->return;
+		$page = $event->object;
+
+		if(!count($this->domains)) return;
+
+		if($page->template->name == "admin") return;
+		if($page->template->name == "form-builder") return;
+
+
+		$domainPageName = $page->rootParent->name;
+
+		switch($page->template->https) {
+			case -1: $protocol = 'http'; break;
+			case 1: $protocol = 'https'; break;
+			default: $protocol = $this->wire('config')->https ? 'https' : 'http';
+		}
+
+		if($this->isAdmin) {
+
+			$newpath = str_replace("{$domainPageName}/", '', $path);
+			$event->return = $newpath;
+
+		} else {
+
+			$found = false;
+			foreach($this->domains as $domain => $d){
+				if($d['root'] == $domainPageName){
+					$found = true;
+					break;
+				}
+			}
+
+			if($found) {
+				if($domainPageName == $this->domain || $domain == $this->domain) {
+					$event->return = str_replace("{$domainPageName}/", '', $path);
+				} else {
+					$newpath = str_replace("{$domainPageName}/", '', $path);
+					$event->return = $protocol . "://" . $domain . $newpath;
+				}
+
 			}
 		}
 	}
@@ -146,11 +225,9 @@ class Multisite extends WireData implements Module, ConfigurableModule {
 	 * LanguageSupportPageNames adds this hook to allow for easy getting a localized url of a page
 	 */
 	public function hookPageLocalUrl(HookEvent $event) {
-		$localUrl = $event->return;
-		if(strpos($localUrl,$this->subdomain) !== false) {
-			$localUrl = str_replace("{$this->subdomain}/","",$localUrl);
-		}
-		$event->return = $localUrl;
+		if(!count($this->domains)) return;
+		$this->modifyPath($event);
+
 	}
 
 	/**
@@ -163,62 +240,92 @@ class Multisite extends WireData implements Module, ConfigurableModule {
 	public function hookPageListActions(HookEvent $event){
 		$actions = $event->return;
 		$page = $event->arguments('page');
+		$domain_name = $page->rootParent->name;
+
+		switch($page->template->https) {
+			case -1: $protocol = 'http'; break;
+			case 1: $protocol = 'https'; break;
+			default: $protocol = $this->wire('config')->https ? 'https' : 'http';
+		}
+
 		if($newurl = $this->getDomainUrl($page)){
 			foreach($actions as $key => $a){
 				if($a['cn'] == "View"){
+					$url = $actions[$key]['url'];
 					$actions[$key]['url'] = $newurl;
 				}
 			}
 		}
+
 		$event->return = $actions;
+
 	}
 
 	/**
 	 * hook page edit form to change page view link
 	 *
 	 */
-	public function hookPageEditForm(HookEvent $event) {
-		$form = $event->return;
-		$field = $form->find("id=ProcessPageEditView")->first();
-		if(!$field) return; // no view, means no template file for this page template
-		$page = $this->modules->ProcessPageEdit->getPage();
-		if($newurl = $this->getDomainUrl($page)){
-			$field->attr("value", "<a href='$newurl'>$field->label</a>");
+	public function hookPageEditFormView(HookEvent $event) {
+		$url = $event->arguments("url");
+		$page = $event->object->getPage();
+		$event->replace = true;
+		$label = $this->_('View'); // Tab Label: View
+		$id = 'ProcessPageEditView';
+		$settings = $this->wire('config')->pageEdit;
+		$target = '';
+		if(is_array($settings) && !empty($settings['viewNew'])) $target = " target='_blank'";
+
+		if($newurl = $this->getDomainUrl($page)) {
+			// wire("log")->save("multisite", "new viewurl");
+			$a = "<a id='_ProcessPageEditView'$target href='$newurl'>$label</a>";
+		} else {
+			$a = "<a id='_ProcessPageEditView'$target href='$url'>$label</a>";
 		}
+		$event->object->addTab($id, $a);
+
 	}
 
 	/**
-	 * This method creates the view url used by the module
-	 * @param  Page   $page a ProcessWire page object we want the get back the url
+	 * This method creates the "view" url used by the module
+	 * @param  Page   $page a ProcessWire page object we want to get back the url
 	 * @return string       the new url
 	 */
-	protected function getDomainUrl(Page $page){
-		$rootparent_domain = $page->rootParent->name;
-		if(!in_array($rootparent_domain, $this->subdomainsArray)) return false;
-		$http = ($this->config->https) ? "https://" : "http://";
-		$newurl = $http . $rootparent_domain;
-		$newurl = $newurl . $page->url;
+	public function getDomainUrl(Page $page){
+		$domainPageName = $page->rootParent->name;
+
+		$found = false;
+		foreach($this->domains as $domain => $d){
+			if($d['root'] == $domainPageName){
+				$found = true;
+				break;
+			}
+		}
+
+		if(!$found) return;
+
+		// if(!array_key_exists($domainPageName, $this->domains)) return false;
+
+		switch($page->template->https) {
+			case -1: $protocol = 'http'; break;
+			case 1: $protocol = 'https'; break;
+			default: $protocol = $this->wire('config')->https ? 'https' : 'http';
+		}
+
+		$newurl = $protocol . "://" . $domain . $page->url;
 		return $newurl;
 	}
 
+
 	/**
-	 * The module's configuration options
-	 * @param  array  $data configuration data as stored by the module
-	 * @return InptufieldWrapper       return the fields
+	 * Set the 404 page id
+	 * @param  string $domain the domain
+	 * @return [type]         [description]
 	 */
-	static public function getModuleConfigInputfields(array $data) {
-
-		$fields = new InputfieldWrapper();
-		$modules = wire('modules');
-
-		$field = $modules->get("InputfieldTextarea");
-		$field->name = "subdomains";
-		$field->label = "Other sites running from same install";
-		$field->description = "Add each domain for their own line. Don't add http or https, just simple domain like: www.example.com tai campaign.example.com";
-		$field->notes = "IMPORTANT: create homepage for each of these domains right on the root. Name should be exactly same as the domain you use here.";
-		$field->attr('value', $data['subdomains']);
-		$fields->add($field);
-
-		return $fields;
+	public function ___set404Page($domain){
+		// $domainKey = str_replace(".", "_", $domain);
+		// wire("log")->save("multisite", $this->get("http404_$domainKey"));
+		if($this->domains[$domain]){
+			wire("config")->http404PageID = (int) $this->domains[$domain]['http404'];
+		}
 	}
 }
