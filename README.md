@@ -79,6 +79,13 @@ $config->httpHosts = array('domain.com', 'domain2.com');
 $config->httpHosts = array('dev.domain.com', 'dev.domain2.com');
 ```
 
+#### Automatic httpHosts setup
+
+```php
+$config->MultisiteDomains = […];
+$config->httpHosts = array_keys($config->MultisiteDomains);
+```
+
 ### Domains
 
 Make sure **domain2.com** points to the same server (A record or CNAME) as **domain1.com** and so on.
