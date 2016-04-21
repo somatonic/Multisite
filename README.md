@@ -11,7 +11,7 @@ The basic module was written by Antti Peisa and forked by Philipp "Soma" Urlich 
 * support Multilanguage (module LanguageSupportPageNames must be installed)
 * support for correct view Actions from admin
 * correct urls within admin
-* modified `locaUrl()` to work correctly, coming from [LanguageSupportNames](http://processwire.com/api/multi-language-support/multi-language-urls/) module
+* modified `localUrl()` to work correctly, coming from [LanguageSupportNames](http://processwire.com/api/multi-language-support/multi-language-urls/) module
 
 ## What does this module do?
 
@@ -77,6 +77,13 @@ $config->httpHosts = array('domain.com', 'domain2.com');
 
 ```php
 $config->httpHosts = array('dev.domain.com', 'dev.domain2.com');
+```
+
+#### Automatic httpHosts setup
+
+```php
+$config->MultisiteDomains = […];
+$config->httpHosts = array_keys($config->MultisiteDomains);
 ```
 
 ### Domains
