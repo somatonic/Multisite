@@ -35,7 +35,7 @@ class Multisite extends WireData implements Module {
 	public static function getModuleInfo() {
 		return array(
 			'title' => 'Multisite',
-			'version' => 007,
+			'version' => 008,
 			'summary' => 'Allows multiple sites with different domains run from single PW-site and database.',
 			'singular' => true,
 			'autoload' => true
@@ -147,23 +147,6 @@ class Multisite extends WireData implements Module {
 
 	public function ready() {
 
-		// to modify the path/url of PW pages - this will modify urls returned by $page->url API
-		// we only do that on front-end/templates and not in admin.
-		// this will leave links in wysywigs with the domain in url, so there
-		// is another module parsing textareas for such links to replace urls on output
-
-		// if($this->modules->isInstalled("LanguageSupportPageNames")){
-		// 	$this->addHook('Page::localUrl', $this, 'hookPageLocalUrl');
-		// }
-
-		// $this->addHookAfter('Page::path', $this, 'modifyPath');
-
-		//to modify the actions "view" link in the page tree
-		// $this->addHookAfter("ProcessPageListRender::getPageActions", $this, 'hookPageListActions');
-
-		//to modify the "view" link when editing a page
-		// $this->addHookAfter("ProcessPageEdit::buildFormView", $this, 'hookPageEditFormView');
-
 	}
 
 	public function hookPageRender(HookEvent $event){
@@ -256,122 +239,6 @@ class Multisite extends WireData implements Module {
 		return $out;
 	}
 
-	/**
-	 * We modify the path of pages, so we can use $page->url as usual
-	 * In this case we strip out the domain segment from the url's of pages
-	 * This is a system-wide change of page->path and page->url
-	 */
-	public function modifyPath(HookEvent $event) {
-
-		$path = $event->return;
-		$page = $event->object;
-
-		if(!count($this->domains)) return;
-
-		if($page->template->name == "admin") return;
-		if($page->template->name == "form-builder") return;
-
-
-		$domainPageName = $page->rootParent->name;
-
-		switch($page->template->https) {
-			case -1: $protocol = 'http'; break;
-			case 1: $protocol = 'https'; break;
-			default: $protocol = $this->wire('config')->https ? 'https' : 'http';
-		}
-
-		if($this->isAdmin) {
-
-			// $newpath = str_replace("{$domainPageName}/", '', $path);
-			// $event->return = $newpath;
-
-		} else {
-
-			$found = false;
-			foreach($this->domains as $domain => $d){
-				if($d['root'] == $domainPageName){
-					$found = true;
-					break;
-				}
-			}
-
-			if($found) {
-				if($domainPageName == $this->domain || $domain == $this->domain) {
-					$event->return = str_replace("{$domainPageName}/", '', $path);
-				} else {
-					$newpath = str_replace("{$domainPageName}/", '', $path);
-					$event->return = $protocol . "://" . $domain . $newpath;
-				}
-
-			}
-		}
-
-	}
-
-	/**
-	 * We modify also localUrl when language support page names module is installed
-	 * LanguageSupportPageNames adds this hook to allow for easy getting a localized url of a page
-	 */
-	public function hookPageLocalUrl(HookEvent $event) {
-		if(!count($this->domains)) return;
-		$this->modifyPath($event);
-
-	}
-
-	/**
-	 * custom page action for view link
-	 * this is to change the domain currently logged in to the correct
-	 * given by the rootParent page name
-	 *
-	 * @param  HookEvent $event Event object
-	 */
-	public function hookPageListActions(HookEvent $event){
-		$actions = $event->return;
-		$page = $event->arguments('page');
-		$domain_name = $page->rootParent->name;
-
-		switch($page->template->https) {
-			case -1: $protocol = 'http'; break;
-			case 1: $protocol = 'https'; break;
-			default: $protocol = $this->wire('config')->https ? 'https' : 'http';
-		}
-
-		if($newurl = $this->getDomainUrl($page)){
-			foreach($actions as $key => $a){
-				if($a['cn'] == "View"){
-					$url = $actions[$key]['url'];
-					$actions[$key]['url'] = $newurl;
-				}
-			}
-		}
-
-		$event->return = $actions;
-
-	}
-
-	/**
-	 * hook page edit form to change page view link
-	 *
-	 */
-	public function hookPageEditFormView(HookEvent $event) {
-		$url = $event->arguments("url");
-		$page = $event->object->getPage();
-		$event->replace = true;
-		$label = $this->_('View'); // Tab Label: View
-		$id = 'ProcessPageEditView';
-		$settings = $this->wire('config')->pageEdit;
-		$target = '';
-		if(is_array($settings) && !empty($settings['viewNew'])) $target = " target='_blank'";
-
-		if($newurl = $this->getDomainUrl($page)) {
-			// wire("log")->save("multisite", "new viewurl");
-			$a = "<a id='_ProcessPageEditView'$target href='$newurl'>$label</a>";
-		} else {
-			$a = "<a id='_ProcessPageEditView'$target href='$url'>$label</a>";
-		}
-		$event->object->addTab($id, $a);
-
-	}
 
 	/**
 	 * This method creates the "view" url used by the module
@@ -412,23 +279,38 @@ class Multisite extends WireData implements Module {
 			// is root name found in url, NOTE: "domain" would match with "domainB", so
 			// we need additional checks
 			if(strpos($cleanIt, $domain['root']) !== false) {
+
 				if($cleanIt == $domain['root']){
 					// we found a 1:1 match
 					// echo("found: " . $cleanIt . " -> " . $domain['root']);
 					$dfound = true;
 				} else if(strpos($cleanIt, "/") !== false){
 					$firstSegment = substr($cleanIt, 0, strpos($cleanIt, "/"));
+
 					if($firstSegment == $domain['root']){
-						// echo("found: " . $cleanIt . " -> $firstSegment : " . $domain['root']);
 						$dfound = true;
+					} else {
+						// when using multilanguage page names, domain root name may in second segment
+						$cleanIt = substr($cleanIt, strpos($cleanIt, "/") + 1);
+						if(strpos($cleanIt, "/") !== false) {
+							$firstSegment = substr($cleanIt, 0, strpos($cleanIt, "/"));
+						} else {
+							$firstSegment = $cleanIt;
+						}
+						if($firstSegment == $domain['root']){
+							$dfound = true;
+						}
 					}
 				}
 
-				if($dfound){
-					$url = str_replace("{$domain['root']}", '', $this->it);
+				if($dfound) {
+					if(strpos($this->it, $domain['root'] . "/") !== false){
+						$url = str_replace("{$domain['root']}/", '', $this->it);
+					} else {
+						$url = str_replace("{$domain['root']}", '', $this->it);
+					}
 					$protocol = $this->wire('config')->https ? 'https' : 'http';
-					$url = $protocol . "://" . $key . $url;
-					// echo " -redirect:url: " . $url;
+					$url = $protocol . "://" . $key . "/" . $url;
 					$this->session->redirect($url);
 				}
 
