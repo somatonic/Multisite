@@ -35,7 +35,7 @@ class Multisite extends WireData implements Module {
 	public static function getModuleInfo() {
 		return array(
 			'title' => 'Multisite',
-			'version' => 006,
+			'version' => 007,
 			'summary' => 'Allows multiple sites with different domains run from single PW-site and database.',
 			'singular' => true,
 			'autoload' => true
@@ -56,8 +56,10 @@ class Multisite extends WireData implements Module {
 
 	public function init() {
 
+
 		// domains from the config
 		if(!count($this->domains)) return;
+
 
 		$this->it = (isset($_GET['it'])) ? ltrim($_GET['it'], '/') : '';
 		$this->isAdmin = false;
@@ -83,70 +85,65 @@ class Multisite extends WireData implements Module {
 			$this->isFormBuilder = true;
 		}
 
+		// exclude calls from PW front-end editing
+		if($this->wire("input")->post->action == "PageFrontEditSave") return;
+
+		// check for root domain name in url and redirect to domain if found
+		$this->_checkDomainInUrl();
+
 		if(array_key_exists($httpHost, $this->domains)) {
 
 			// set the current domain, so it can be picked up in templates or other modules
 			$this->domain = $httpHost;
 			$this->site = $this->domains[$httpHost];
-
 			$this->set404Page($this->domain);
-
 			$domainPageName = $this->domains[$httpHost]['root'];
 
-			// if domain is visible in url, we might wanna redirect
-			if(strpos($this->it, $domainPageName) !== false) {
+			// if the requested URI is an admin url we don't need to go further
+			// we just need to make sure the $this->domain is set, as it's may be
+			// used later in other modules to modify the url, or localUrl()
+			if($this->isAdmin) return;
 
-				// $http = ($this->config->https) ? "https://" : "http://";
-				// $url = $http . $this->domain;
-				$url = str_replace("/{$domainPageName}/", '/', '/' . $this->it);
-				// TODO: problems with urls ?
-				$this->session->redirect($url);
+			// if requested url is a file we don't change
+			if($this->isAssets) return;
 
-			} else {
+			// if requested url is a file we don't change
+			if($this->isFormBuilder) return;
 
-				// if the requested URI is an admin url we don't need to go further
-				// we just need to make sure the $this->domain is set, as it's may be
-				// used later in other modules to modify the url, or localUrl()
-				if($this->isAdmin) return;
+			// language page names support if installed
+			// strip off the lang segment, to later prepend it again
+			$this->langSegment = '';
+			if($this->modules->isInstalled("LanguageSupportPageNames")) {
+				foreach($this->languages as $lang) {
+					$langID = $lang->id;
+					if($lang->isDefault()) $langID = '';
 
-				// if requested url is a file we don't change
-				if($this->isAssets) return;
-
-				// if requested url is a file we don't change
-				if($this->isFormBuilder) return;
-
-				// language page names support if installed
-				// strip off the lang segment, to later prepend it again
-				$this->langSegment = '';
-				if($this->modules->isInstalled("LanguageSupportPageNames")) {
-					foreach($this->languages as $lang) {
-						$langID = $lang->id;
-						if($lang->isDefault()) $langID = '';
-
-						$rootPage = $this->pages->get(1);
-						$rootName = $rootPage->get("name$langID");
-						if(strlen($rootName)) {
-							if(strpos($this->it, $rootName . "/") === 0){
-								$this->langSegment = $rootName;
-								// $new_it = substr($this->it,strlen($this->langSegment)+1);
-								$this->it = substr($this->it,strlen($this->langSegment)+1);
-							}
+					$rootPage = $this->pages->get(1);
+					$rootName = $rootPage->get("name$langID");
+					if(strlen($rootName)) {
+						if(strpos($this->it, $rootName . "/") === 0){
+							$this->langSegment = $rootName;
+							// $new_it = substr($this->it,strlen($this->langSegment)+1);
+							$this->it = substr($this->it,strlen($this->langSegment)+1);
 						}
 					}
 				}
-
-				$langSegment = $this->langSegment ? $this->langSegment . "/" : "";
-
-				// we modify the GET it to tell PW what page to load
-				$_GET['it'] = (isset($_GET['it']))
-						? "$langSegment{$domainPageName}/" . $this->it
-						: "$langSegment{$domainPageName}/";
 			}
 
+			$langSegment = $this->langSegment ? $this->langSegment . "/" : "";
+
+			// we modify the GET it to tell PW what page to load
+			$_GET['it'] = (isset($_GET['it']))
+					? "$langSegment{$domainPageName}/" . $this->it
+					: "$langSegment{$domainPageName}/";
 		}
 
+		if(!$this->isAdmin) {
+			$this->addHookAfter('Page::render', $this, 'hookPageRender');
+		}
 
 	}
+
 
 	public function ready() {
 
@@ -155,18 +152,108 @@ class Multisite extends WireData implements Module {
 		// this will leave links in wysywigs with the domain in url, so there
 		// is another module parsing textareas for such links to replace urls on output
 
-		if($this->modules->isInstalled("LanguageSupportPageNames")){
-			$this->addHook('Page::localUrl', $this, 'hookPageLocalUrl');
-		}
+		// if($this->modules->isInstalled("LanguageSupportPageNames")){
+		// 	$this->addHook('Page::localUrl', $this, 'hookPageLocalUrl');
+		// }
 
-		$this->addHookAfter('Page::path', $this, 'modifyPath');
+		// $this->addHookAfter('Page::path', $this, 'modifyPath');
 
 		//to modify the actions "view" link in the page tree
-		$this->addHookAfter("ProcessPageListRender::getPageActions", $this, 'hookPageListActions');
+		// $this->addHookAfter("ProcessPageListRender::getPageActions", $this, 'hookPageListActions');
 
 		//to modify the "view" link when editing a page
-		$this->addHookAfter("ProcessPageEdit::buildFormView", $this, 'hookPageEditFormView');
+		// $this->addHookAfter("ProcessPageEdit::buildFormView", $this, 'hookPageEditFormView');
 
+	}
+
+	public function hookPageRender(HookEvent $event){
+
+		// $timer = Debug::Timer();
+		$out = $event->return;
+		$out = $this->parseLinks($out);
+		$event->return = $out;
+		// wire("log")->save("multisite", "timer: ". Debug::Timer($timer));
+
+	}
+
+	public function ___parseLinks($out){
+
+		if(!strlen($out)) return $out;
+
+		foreach($this->domains as $key => $domain){
+
+			if($this->modules->isInstalled("LanguageSupportPageNames")) {
+				foreach($this->languages as $lang) {
+					$langID = $lang->id;
+					if($lang->isDefault()) $langID = '';
+
+					$rootPage = $this->pages->get(1);
+					$rootName = $rootPage->get("name$langID");
+					if($rootName == "home") $rootName = "";
+					if(strlen($rootName)) $rootName = "/" . $rootName;
+
+					if($key == $this->domain){
+						// internal relative urls
+						$replace = array(
+							"\"$rootName/{$domain['root']}/",
+							"'$rootName/{$domain['root']}/",
+							);
+						$with = array(
+							"\"$rootName/",
+							"'$rootName/",
+							);
+						// echo (" - " . $replace . " / " . $with);
+					} else {
+						// external urls
+						$replace = array(
+							"\"$rootName/{$domain['root']}/",
+							"'$rootName/{$domain['root']}/",
+							"\"http://{$key}$rootName/{$domain['root']}/",
+							"'http://{$key}$rootName/{$domain['root']}/",
+							);
+						$with = array(
+							"\"http://{$key}$rootName/",
+							"'http://{$key}$rootName/",
+							"\"http://{$key}$rootName/",
+							"\'http://{$key}$rootName/",
+							);
+						// echo (" - " . $replace . " / " . $with);
+					}
+					$out = str_replace($replace, $with, $out);
+				}
+
+			} else {
+
+				if($key == $this->domain){
+					// local urls
+					$replace = array(
+						"\"/" . $domain['root'] . "/",
+						"'/" . $domain['root'] . "/",
+						);
+					$with = array(
+						"\"/",
+						"'/",
+						);
+				} else {
+					// external urls
+					$replace = array(
+						"\"/" . $domain['root'] . "/",
+						"'/" . $domain['root'] . "/",
+						"\"http://$key/" . $domain['root'] . "/",
+						"'http://$key/" . $domain['root'] . "/",
+						);
+					$with = array(
+						"\"http://" . $key . "/",
+						"'http://" . $key . "/",
+						"\"http://" . $key . "/",
+						"'http://" . $key . "/",
+						);
+				}
+				$out = str_replace($replace, $with, $out);
+			}
+		}
+
+		return $out;
 	}
 
 	/**
@@ -195,8 +282,8 @@ class Multisite extends WireData implements Module {
 
 		if($this->isAdmin) {
 
-			$newpath = str_replace("{$domainPageName}/", '', $path);
-			$event->return = $newpath;
+			// $newpath = str_replace("{$domainPageName}/", '', $path);
+			// $event->return = $newpath;
 
 		} else {
 
@@ -218,6 +305,7 @@ class Multisite extends WireData implements Module {
 
 			}
 		}
+
 	}
 
 	/**
@@ -315,6 +403,40 @@ class Multisite extends WireData implements Module {
 		return $newurl;
 	}
 
+	public function _checkDomainInUrl(){
+		// in case we find a multisite root domain in request path, we redirect to the correct domain/url
+		$cleanIt = rtrim($this->it, "/");
+		$dfound = false;
+		foreach($this->domains as $key => $domain){
+
+			// is root name found in url, NOTE: "domain" would match with "domainB", so
+			// we need additional checks
+			if(strpos($cleanIt, $domain['root']) !== false) {
+				if($cleanIt == $domain['root']){
+					// we found a 1:1 match
+					// echo("found: " . $cleanIt . " -> " . $domain['root']);
+					$dfound = true;
+				} else if(strpos($cleanIt, "/") !== false){
+					$firstSegment = substr($cleanIt, 0, strpos($cleanIt, "/"));
+					if($firstSegment == $domain['root']){
+						// echo("found: " . $cleanIt . " -> $firstSegment : " . $domain['root']);
+						$dfound = true;
+					}
+				}
+
+				if($dfound){
+					$url = str_replace("{$domain['root']}", '', $this->it);
+					$protocol = $this->wire('config')->https ? 'https' : 'http';
+					$url = $protocol . "://" . $key . $url;
+					// echo " -redirect:url: " . $url;
+					$this->session->redirect($url);
+				}
+
+			}
+		}
+
+	}
+
 
 	/**
 	 * Set the 404 page id
@@ -322,8 +444,6 @@ class Multisite extends WireData implements Module {
 	 * @return [type]         [description]
 	 */
 	public function ___set404Page($domain){
-		// $domainKey = str_replace(".", "_", $domain);
-		// wire("log")->save("multisite", $this->get("http404_$domainKey"));
 		if($this->domains[$domain]){
 			wire("config")->http404PageID = (int) $this->domains[$domain]['http404'];
 		}
