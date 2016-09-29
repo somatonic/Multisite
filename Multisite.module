@@ -3,23 +3,12 @@
 /**
  *
  * Multisite module for Processwire
- * (C) 2012 Antti Peisa, Avoine Oy
  *
- * Modifications by Philipp "Soma" Urlich
- * - support Multilanguage
- * - support for correct view Actions from admin
- * - correct urls within admin (TODO: make that configurable, so one can turn off
- * and add a url textformatter parser for replacing urls on output)
- * - modified locaUrl() to work correctly, coming from LanguageSupportNames module
+ * Original author: Ryan, Antti Peisa, Avoine Oy
+ * @author Philipp "Soma" Urlich
  *
- *
- * ProcessWire 2.x
- * Copyright (C) 2010 by Ryan Cramer
- * Licensed under GNU/GPL v2, see LICENSE.TXT
- *
- * http://www.processwire.com
- * http://www.ryancramer.com
- *
+ * Copyright (c) 2016 by Philipp Urlich
+ * Licensed under MIT, see LICENSE.txt
  */
 
 class Multisite extends WireData implements Module {
@@ -35,8 +24,9 @@ class Multisite extends WireData implements Module {
 	public static function getModuleInfo() {
 		return array(
 			'title' => 'Multisite',
-			'version' => 008,
+			'version' => 9,
 			'summary' => 'Allows multiple sites with different domains run from single PW-site and database.',
+			'href' => 'https://github.com/somatonic/Multisite',
 			'singular' => true,
 			'autoload' => true
 			);
@@ -56,10 +46,8 @@ class Multisite extends WireData implements Module {
 
 	public function init() {
 
-
 		// domains from the config
 		if(!count($this->domains)) return;
-
 
 		$this->it = (isset($_GET['it'])) ? ltrim($_GET['it'], '/') : '';
 		$this->isAdmin = false;
@@ -145,20 +133,24 @@ class Multisite extends WireData implements Module {
 	}
 
 
-	public function ready() {
-
-	}
-
+	/**
+	 * Hook page render function and parse the output for modifying urls
+	 * @param  HookEvent $event Event object from the hook
+	 */
 	public function hookPageRender(HookEvent $event){
-
-		// $timer = Debug::Timer();
 		$out = $event->return;
 		$out = $this->parseLinks($out);
 		$event->return = $out;
-		// wire("log")->save("multisite", "timer: ". Debug::Timer($timer));
-
 	}
 
+	/**
+	 * Parse hrefs on the rendered output of a page to replace physical page urls with
+	 * the correct ones. If a URL found of another domain, the full domain URL will
+	 * be inserted.
+	 *
+	 * @param  string $out The output from page render
+	 * @return string      The parsed output
+	 */
 	public function ___parseLinks($out){
 
 		if(!strlen($out)) return $out;
@@ -241,82 +233,53 @@ class Multisite extends WireData implements Module {
 
 
 	/**
-	 * This method creates the "view" url used by the module
-	 * @param  Page   $page a ProcessWire page object we want to get back the url
-	 * @return string       the new url
+	 * In case we have a request that has the physical page URL we check
+	 * for the domain root names, replace it if found and redirect to the
+	 * correct URL
+	 *
 	 */
-	public function getDomainUrl(Page $page){
-		$domainPageName = $page->rootParent->name;
+	public function _checkDomainInUrl() {
 
-		$found = false;
-		foreach($this->domains as $domain => $d){
-			if($d['root'] == $domainPageName){
-				$found = true;
-				break;
-			}
-		}
-
-		if(!$found) return;
-
-		// if(!array_key_exists($domainPageName, $this->domains)) return false;
-
-		switch($page->template->https) {
-			case -1: $protocol = 'http'; break;
-			case 1: $protocol = 'https'; break;
-			default: $protocol = $this->wire('config')->https ? 'https' : 'http';
-		}
-
-		$newurl = $protocol . "://" . $domain . $page->url;
-		return $newurl;
-	}
-
-	public function _checkDomainInUrl(){
 		// in case we find a multisite root domain in request path, we redirect to the correct domain/url
 		$cleanIt = rtrim($this->it, "/");
 		$dfound = false;
-		foreach($this->domains as $key => $domain){
 
-			// is root name found in url, NOTE: "domain" would match with "domainB", so
-			// we need additional checks
-			if(strpos($cleanIt, $domain['root']) !== false) {
+		foreach($this->domains as $domain => $domainInfo) {
 
-				if($cleanIt == $domain['root']){
+			$rootName = $domainInfo['root'];
+
+			// is root name found in url, NOTE: "domain" would match with "domainB",
+			// so we need additional checks
+			if(strpos($cleanIt, $rootName) !== false) {
+
+				if($cleanIt == $rootName) {
 					// we found a 1:1 match
-					// echo("found: " . $cleanIt . " -> " . $domain['root']);
 					$dfound = true;
-				} else if(strpos($cleanIt, "/") !== false){
-					$firstSegment = substr($cleanIt, 0, strpos($cleanIt, "/"));
 
-					if($firstSegment == $domain['root']){
+				} else if(strpos($cleanIt, "/") !== false) {
+
+					// we need to search further down, since there's a "/" we can search for a match
+					// this works also in case of having language segments or in case a domain root name
+					// is a substring of another domain root name
+					$search = "#{$rootName}\/#i";
+					if(preg_match($search, $cleanIt, $matches)){
 						$dfound = true;
-					} else {
-						// when using multilanguage page names, domain root name may in second segment
-						$cleanIt = substr($cleanIt, strpos($cleanIt, "/") + 1);
-						if(strpos($cleanIt, "/") !== false) {
-							$firstSegment = substr($cleanIt, 0, strpos($cleanIt, "/"));
-						} else {
-							$firstSegment = $cleanIt;
-						}
-						if($firstSegment == $domain['root']){
-							$dfound = true;
-						}
 					}
 				}
 
 				if($dfound) {
-					if(strpos($this->it, $domain['root'] . "/") !== false){
-						$url = str_replace("{$domain['root']}/", '', $this->it);
+					if(strpos($this->it, $rootName . "/") !== false) {
+						$url = str_replace("{$rootName}/", '', $this->it);
 					} else {
-						$url = str_replace("{$domain['root']}", '', $this->it);
+						$url = str_replace("{$rootName}", '', $this->it);
 					}
 					$protocol = $this->wire('config')->https ? 'https' : 'http';
-					$url = $protocol . "://" . $key . "/" . $url;
+					$url = $protocol . "://" . $domain . "/" . $url;
 					$this->session->redirect($url);
 				}
 
 			}
 		}
-
 	}
 
 
@@ -331,3 +294,4 @@ class Multisite extends WireData implements Module {
 		}
 	}
 }
+
