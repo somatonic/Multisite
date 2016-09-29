@@ -2,16 +2,9 @@
 
 The basic module was written by Antti Peisa and forked by Philipp "Soma" Urlich (_"there's not much left from the original module, but the basic concept is the same"_).
 
-* [Github: Multisite](https://github.com/somatonic/Multisite) by Philipp "Soma" Urlich 
+* [Github: Multisite](https://github.com/somatonic/Multisite) by Philipp "Soma" Urlich
 * [Github: Multisite](https://github.com/apeisa/Multisite) by Antti Peisa – **deprecated**
 * [ProcessWire Forum](https://processwire.com/talk/topic/1025-multisite/)
-
-**Changelog**
-
-* support Multilanguage (module LanguageSupportPageNames must be installed)
-* support for correct view Actions from admin
-* correct urls within admin
-* modified `localUrl()` to work correctly, coming from [LanguageSupportNames](http://processwire.com/api/multi-language-support/multi-language-urls/) module
 
 ## What does this module do?
 
@@ -29,8 +22,8 @@ This is totally different: this is a single pw-installation which has multiple s
 Just create pages with names like `www.campaigndomain.com` unter the root page and add these in the `config.php` via an array in `$config->MultisiteDomains`.
 
 This allows for different domain configurations on different environments like dev and live stage, and since it's not in DB (via the module config) it can be easily transfered with a dump without worrying to overwrite or change the settings.
- 
-Also there's no need to change the domain "root" pages name, as it's not directly coupled to the requesting domain. 
+
+Also there's no need to change the domain "root" pages name, as it's not directly coupled to the requesting domain.
 So you only change the array keys (=domain).
 
 ### Add MultisiteDomains
@@ -39,7 +32,7 @@ So you only change the array keys (=domain).
 
 ```php
 $config->MultisiteDomains = array(
-    "domain1.com" => array( // domain name can be used to map to root page
+    "domain1.com" => array( // domain name is used to map to root page
             "root" => "www.domain1.com", // page name for the root page
             "http404" => 27
         ),
@@ -54,7 +47,7 @@ $config->MultisiteDomains = array(
 
 ```php
 $config->MultisiteDomains = array(
-    "dev.domain1.com" => array( // domain name can be used to map to root page
+    "dev.domain1.com" => array( // domain name is used to map to root page
             "root" => "www.domain1.com", // page name for the root page
             "http404" => 27
         ),
@@ -64,6 +57,11 @@ $config->MultisiteDomains = array(
         )
 );
 ```
+
+**Notes**: The page namen for the root page should be carefully taken. It should be as unique as possible, but kept short. it doesn't have to be the domain name 1:1, but can be any string, word or phrase.
+
+For example a name like "event" would be a bad choice, since there might be other pages named "event" in your site, that could lead to problems with the module trying to resolve a requested URL that still contains a domain root name in the URL.
+
 
 ### Add urls to httpHosts depending on environment
 
@@ -109,7 +107,7 @@ And on the server side you have to make sure that **domain2.com** is pointing to
 
 ```php
 // get current domain
-echo $modules->get('Multisite')->domain; 
+echo $modules->get('Multisite')->domain;
 [dev]  'dev.domain1.com'
 [live] 'domain1.com'
 
@@ -147,7 +145,7 @@ But this wasn't ever recommended and it can lead to complications.
 Check that all domains for the specific environment are included inside `$config->httpHosts`.
 
 #### DNS Record is not set properly
- 
+
 The DNS Record of all domains must point to the same server.
 
 #### Domains point to a wrong directory
@@ -165,6 +163,6 @@ Edit the root page in the example above called *Web*  and add language paths the
 Since the whole concept is all a pretty hack, I found that it comes with some complications that can't be solved in an elegant way. So for example the biggest issue is that you can't crosslink pages via the RTE Link plugin, since it doesn't know about Multisite. So you'll end with wrong URL's when for example you link from a page of one site to a page of another site. If that's an issue it's still possible to copy the ProcessPageEditLink.module and modify the root parent for the page tree select. I'd be glad to help out with an example there.
 
 Again since this module is pretty much a hack, I'm not officially supporting and releasing this module. Use at your own risk. We use it in various projects now and while it works fine with all it's little drawbacks, this version is little more solid.
- 
+
 I would rather like to see if there's a way for a more integrated and supported way in core. But I'm not even sure how this could work out. Ryan may has some ideas or maybe thinks this isn't something PW could support. - Note that there's [multisite core support](https://processwire.com/api/modules/multi-site-support/), but it's for different DB's and "site" folders, but that's a different case altogether.
 
