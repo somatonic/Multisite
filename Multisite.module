@@ -24,7 +24,7 @@ class Multisite extends WireData implements Module {
 	public static function getModuleInfo() {
 		return array(
 			'title' => 'Multisite',
-			'version' => 9,
+			'version' => 10,
 			'summary' => 'Allows multiple sites with different domains run from single PW-site and database.',
 			'href' => 'https://github.com/somatonic/Multisite',
 			'singular' => true,
@@ -242,6 +242,7 @@ class Multisite extends WireData implements Module {
 
 		// in case we find a multisite root domain in request path, we redirect to the correct domain/url
 		$cleanIt = rtrim($this->it, "/");
+		$cleanIt = $cleanIt . "/";
 		$dfound = false;
 
 		foreach($this->domains as $domain => $domainInfo) {
@@ -265,6 +266,7 @@ class Multisite extends WireData implements Module {
 					if(preg_match($search, $cleanIt, $matches)){
 						$dfound = true;
 					}
+					// echo "<br>" . $search . " - " . $cleanIt . " " . preg_match($search, $cleanIt, $matches);
 				}
 
 				if($dfound) {
