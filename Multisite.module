@@ -24,7 +24,7 @@ class Multisite extends WireData implements Module {
 	public static function getModuleInfo() {
 		return array(
 			'title' => 'Multisite',
-			'version' => 10,
+			'version' => 11,
 			'summary' => 'Allows multiple sites with different domains run from single PW-site and database.',
 			'href' => 'https://github.com/somatonic/Multisite',
 			'singular' => true,
@@ -155,6 +155,8 @@ class Multisite extends WireData implements Module {
 
 		if(!strlen($out)) return $out;
 
+		$protocol = $this->wire('config')->https ? 'https' : 'http';
+
 		foreach($this->domains as $key => $domain){
 
 			if($this->modules->isInstalled("LanguageSupportPageNames")) {
@@ -183,14 +185,14 @@ class Multisite extends WireData implements Module {
 						$replace = array(
 							"\"$rootName/{$domain['root']}/",
 							"'$rootName/{$domain['root']}/",
-							"\"http://{$key}$rootName/{$domain['root']}/",
-							"'http://{$key}$rootName/{$domain['root']}/",
+							"\"$protocol://{$key}$rootName/{$domain['root']}/",
+							"'$protocol://{$key}$rootName/{$domain['root']}/",
 							);
 						$with = array(
-							"\"http://{$key}$rootName/",
-							"'http://{$key}$rootName/",
-							"\"http://{$key}$rootName/",
-							"\'http://{$key}$rootName/",
+							"\"$protocol://{$key}$rootName/",
+							"'$protocol://{$key}$rootName/",
+							"\"$protocol://{$key}$rootName/",
+							"\'$protocol://{$key}$rootName/",
 							);
 						// echo (" - " . $replace . " / " . $with);
 					}
@@ -214,14 +216,14 @@ class Multisite extends WireData implements Module {
 					$replace = array(
 						"\"/" . $domain['root'] . "/",
 						"'/" . $domain['root'] . "/",
-						"\"http://$key/" . $domain['root'] . "/",
-						"'http://$key/" . $domain['root'] . "/",
+						"\"$protocol://$key/" . $domain['root'] . "/",
+						"'$protocol://$key/" . $domain['root'] . "/",
 						);
 					$with = array(
-						"\"http://" . $key . "/",
-						"'http://" . $key . "/",
-						"\"http://" . $key . "/",
-						"'http://" . $key . "/",
+						"\"$protocol://" . $key . "/",
+						"'$protocol://" . $key . "/",
+						"\"$protocol://" . $key . "/",
+						"'$protocol://" . $key . "/",
 						);
 				}
 				$out = str_replace($replace, $with, $out);
@@ -276,8 +278,12 @@ class Multisite extends WireData implements Module {
 						$url = str_replace("{$rootName}", '', $this->it);
 					}
 					$protocol = $this->wire('config')->https ? 'https' : 'http';
+					$qsArray = $_GET;
+					unset($qsArray['it']);
+					$qs = http_build_query($qsArray);
 					$url = $protocol . "://" . $domain . "/" . $url;
-					$this->session->redirect($url);
+					if($qs) $qs = "?" . $qs;
+					$this->session->redirect($url . $qs);
 				}
 
 			}
