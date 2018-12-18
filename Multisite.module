@@ -24,7 +24,7 @@ class Multisite extends WireData implements Module {
 	public static function getModuleInfo() {
 		return array(
 			'title' => 'Multisite',
-			'version' => 11,
+			'version' => 12,
 			'summary' => 'Allows multiple sites with different domains run from single PW-site and database.',
 			'href' => 'https://github.com/somatonic/Multisite',
 			'singular' => true,
@@ -166,17 +166,26 @@ class Multisite extends WireData implements Module {
 
 					$rootPage = $this->pages->get(1);
 					$rootName = $rootPage->get("name$langID");
-					if($rootName == "home") $rootName = "";
-					if(strlen($rootName)) $rootName = "/" . $rootName;
+					if($rootName == "home") {
+						$rootName = "";
+						$rootNameJson = "\\/";
+					} else if(strlen($rootName)) {
+						$rootName = "/" . $rootName;
+						$rootNameJson = "\\" . $rootName . "\\/";
+					}
 
 					if($key == $this->domain){
 						// internal relative urls
 						$replace = array(
 							"\"$rootName/{$domain['root']}/",
+							"$rootName/{$domain['root']}/",
+							"\"$rootNameJson{$domain['root']}\/",
 							"'$rootName/{$domain['root']}/",
 							);
 						$with = array(
 							"\"$rootName/",
+							"$rootName/",
+							"\"$rootNameJson",
 							"'$rootName/",
 							);
 						// echo (" - " . $replace . " / " . $with);
@@ -304,4 +313,3 @@ class Multisite extends WireData implements Module {
 		}
 	}
 }
-
